@@ -483,3 +483,6 @@ $RECYCLE.BIN/
 
 # Exclude model files
 *.bin
+
+# Exclude native library files
+*.so
