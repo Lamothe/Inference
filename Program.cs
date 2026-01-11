@@ -1,20 +1,27 @@
-﻿using Llama2;
+﻿using Llama;
+using Llama.Backends;
+using Llama.Backends.Cpu;
+using Llama.Backends.Rocm;
 
-string checkpoint_path = "stories15M.bin";
-string tokenizer_path = "tokenizer.bin";
+string checkpointPath = "stories110M.bin";
+string tokeniserPath = "tokeniser.bin";
 float temperature = 1.0f;
 float topp = 0.9f;
 int steps = 256;
 string? prompt = null;
-ulong rng_seed = 0;
+ulong rngSeed = 0;
 string mode = "generate";
-string? system_prompt = null;
+string? systemPrompt = null;
+string requestedBackend = "CPU";
 
 // Argument parsing
 for (int i = 0; i < args.Length; i += 2)
 {
     if (i + 1 >= args.Length)
     {
+        // If there's only one extra arg assume that it's the model file.
+        checkpointPath = args[i];
+
         break;
     }
 
@@ -22,18 +29,20 @@ for (int i = 0; i < args.Length; i += 2)
     {
         case "-t": temperature = float.Parse(args[i + 1]); break;
         case "-p": topp = float.Parse(args[i + 1]); break;
-        case "-s": rng_seed = ulong.Parse(args[i + 1]); break;
+        case "-s": rngSeed = ulong.Parse(args[i + 1]); break;
         case "-n": steps = int.Parse(args[i + 1]); break;
         case "-i": prompt = args[i + 1]; break;
-        case "-z": tokenizer_path = args[i + 1]; break;
+        case "-k": tokeniserPath = args[i + 1]; break;
         case "-m": mode = args[i + 1]; break;
-        case "-y": system_prompt = args[i + 1]; break;
+        case "-y": systemPrompt = args[i + 1]; break;
+        case "-b": requestedBackend = args[i + 1]; break;
+        default: throw new Exception($"Unknown parameter argument {args[i]}");
     }
 }
 
-if (rng_seed <= 0)
+if (rngSeed <= 0)
 {
-    rng_seed = (ulong)DateTime.Now.Ticks;
+    rngSeed = (ulong)DateTime.Now.Ticks;
 }
 
 if (temperature < 0.0f)
@@ -51,26 +60,33 @@ if (steps < 0)
     steps = 0;
 }
 
-using var transformer = new Transformer();
-Engine.BuildTransformer(transformer, checkpoint_path);
+using IBackend backend = requestedBackend switch
+{
+    "CPU" => new CpuBackend(),
+    "ROCm" => new RocmBackend(),
+    _ => throw new Exception($"Unknown backend {requestedBackend}")
+};
+
+Console.WriteLine($"Initialised {requestedBackend} backend");
+
+using var transformer = new Transformer(checkpointPath, backend);
 
 if (steps == 0 || steps > transformer.config.seq_len)
 {
     steps = transformer.config.seq_len;
 }
 
-var tokenizer = new Tokenizer();
-Engine.BuildTokenizer(tokenizer, tokenizer_path, transformer.config.vocab_size);
-
-var sampler = new Sampler(transformer.config.vocab_size, temperature, topp, rng_seed);
+var tokeniser = new Tokeniser(tokeniserPath, transformer.config.vocab_size);
+var sampler = new Sampler(transformer.config.vocab_size, temperature, topp, rngSeed);
+var engine = new Engine(backend);
 
 if (mode == "generate")
 {
-    Engine.Generate(transformer, tokenizer, sampler, prompt!, steps);
+    engine.Generate(transformer, tokeniser, sampler, prompt!, steps);
 }
 else if (mode == "chat")
 {
-    Engine.Chat(transformer, tokenizer, sampler, prompt, system_prompt, steps);
+    engine.Chat(transformer, tokeniser, sampler, prompt, systemPrompt, steps);
 }
 else
 {

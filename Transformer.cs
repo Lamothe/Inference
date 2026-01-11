@@ -1,60 +1,37 @@
-using System.IO.MemoryMappedFiles;
 using System.Runtime.InteropServices;
+using Llama.Backends;
 
-namespace Llama2;
+namespace Llama;
 
 public unsafe class Transformer : IDisposable
 {
-    public Config config; // the hyperparameters of the architecture (the blueprint)
-    public TransformerWeights weights; // the weights of the model
-    public RunState state; // buffers for the "wave" of activations in the forward pass
+    public Config config;
+    public TransformerWeights weights;
+    public RunState state;
 
-    // Memory mapping resources
-    private MemoryMappedFile? _mmf;
-    private MemoryMappedViewAccessor? _accessor;
-    public byte* _data; // pointer to the start of memory mapped data
+    // Replaced MemoryMappedFile with a raw pinned pointer
+    public float* _data;
+    private ulong _totalByteSize;
+
+    private IBackend backend;
+
+    public Transformer(string checkpoint_path, IBackend backend)
+    {
+        this.backend = backend;
+
+        ReadCheckpoint(checkpoint_path);
+        state = new RunState(config, backend);
+    }
 
     public void Dispose()
     {
-        FreeRunState();
-        if (_accessor != null)
+        state.Dispose();
+
+        if (_data != null)
         {
-            _accessor.SafeMemoryMappedViewHandle.ReleasePointer();
-            _accessor.Dispose();
+            backend.Free(_data);
+            _data = null;
         }
-        _mmf?.Dispose();
-    }
-
-    public void MallocRunState()
-    {
-        int kv_dim = config.dim * config.n_kv_heads / config.n_heads;
-
-        // Using NativeMemory (requires .NET 6+) for alignment and raw pointers
-        // Zeroed memory (AllocZeroed) to match calloc
-        state.x = (float*)NativeMemory.AllocZeroed((nuint)config.dim, sizeof(float));
-        state.xb = (float*)NativeMemory.AllocZeroed((nuint)config.dim, sizeof(float));
-        state.xb2 = (float*)NativeMemory.AllocZeroed((nuint)config.dim, sizeof(float));
-        state.hb = (float*)NativeMemory.AllocZeroed((nuint)config.hidden_dim, sizeof(float));
-        state.hb2 = (float*)NativeMemory.AllocZeroed((nuint)config.hidden_dim, sizeof(float));
-        state.q = (float*)NativeMemory.AllocZeroed((nuint)config.dim, sizeof(float));
-        state.key_cache = (float*)NativeMemory.AllocZeroed((nuint)(config.n_layers * config.seq_len * kv_dim), sizeof(float));
-        state.value_cache = (float*)NativeMemory.AllocZeroed((nuint)(config.n_layers * config.seq_len * kv_dim), sizeof(float));
-        state.att = (float*)NativeMemory.AllocZeroed((nuint)(config.n_heads * config.seq_len), sizeof(float));
-        state.logits = (float*)NativeMemory.AllocZeroed((nuint)config.vocab_size, sizeof(float));
-    }
-
-    public void FreeRunState()
-    {
-        if (state.x != null) NativeMemory.Free(state.x);
-        if (state.xb != null) NativeMemory.Free(state.xb);
-        if (state.xb2 != null) NativeMemory.Free(state.xb2);
-        if (state.hb != null) NativeMemory.Free(state.hb);
-        if (state.hb2 != null) NativeMemory.Free(state.hb2);
-        if (state.q != null) NativeMemory.Free(state.q);
-        if (state.att != null) NativeMemory.Free(state.att);
-        if (state.logits != null) NativeMemory.Free(state.logits);
-        if (state.key_cache != null) NativeMemory.Free(state.key_cache);
-        if (state.value_cache != null) NativeMemory.Free(state.value_cache);
     }
 
     public void ReadCheckpoint(string checkpointPath)
@@ -67,28 +44,47 @@ public unsafe class Transformer : IDisposable
 
         using var fs = new FileStream(checkpointPath, FileMode.Open, FileAccess.Read);
 
-        // Read config
-        byte[] configBytes = new byte[sizeof(Config)];
+        // 1. Read Config
+        var configBytes = new byte[sizeof(Config)];
         fs.ReadExactly(configBytes, 0, sizeof(Config));
         fixed (byte* pConfig = configBytes)
         {
             config = *(Config*)pConfig;
         }
 
-        int shared_weights = config.vocab_size > 0 ? 1 : 0;
+        var shared_weights = config.vocab_size > 0 ? 1 : 0;
         config.vocab_size = Math.Abs(config.vocab_size);
-        long file_size = fs.Length;
-        fs.Close();
 
-        // Memory map
-        _mmf = MemoryMappedFile.CreateFromFile(checkpointPath, FileMode.Open);
-        _accessor = _mmf.CreateViewAccessor(0, file_size);
-        byte* ptr = null;
-        _accessor.SafeMemoryMappedViewHandle.AcquirePointer(ref ptr);
-        _data = ptr;
+        // 2. Allocate Pinned Memory for the WHOLE file (Config + Weights)
+        // This mirrors run.c logic exactly
+        _totalByteSize = (ulong)fs.Length;
+        _data = backend.Allocate<float>(_totalByteSize);
 
-        // Offset by config size
-        float* weights_ptr = (float*)(_data + sizeof(Config));
+        if (_data == null)
+        {
+            Console.Error.WriteLine("Failed to allocate pinned memory for model!");
+            Environment.Exit(1);
+        }
+
+        // 3. Read the file into the pinned memory
+        Console.WriteLine($"Loading model ({_totalByteSize / 1024 / 1024} MB) into memory...");
+
+        // Rewind to start to read everything including config (to keep offsets simple)
+        fs.Position = 0;
+
+        // Use a Span to read directly into the native memory
+        var dataSpan = new Span<byte>(_data, (int)_totalByteSize);
+        int bytesRead = fs.Read(dataSpan);
+
+        if (bytesRead != (int)_totalByteSize)
+        {
+            Console.Error.WriteLine("Failed to read the complete model file!");
+            Environment.Exit(1);
+        }
+
+        // 4. Set up the weight pointers
+        // Offset by config size (exactly like run.c)
+        var weights_ptr = (float*)((byte*)_data + sizeof(Config));
         MemoryMapWeights(weights_ptr, shared_weights);
     }
 
@@ -102,13 +98,13 @@ public unsafe class Transformer : IDisposable
         weights.rms_att_weight = ptr;
         ptr += n_layers * config.dim;
         weights.wq = ptr;
-        ptr += n_layers * config.dim * (config.n_heads * head_size);
+        ptr += n_layers * config.dim * config.n_heads * head_size;
         weights.wk = ptr;
-        ptr += n_layers * config.dim * (config.n_kv_heads * head_size);
+        ptr += n_layers * config.dim * config.n_kv_heads * head_size;
         weights.wv = ptr;
-        ptr += n_layers * config.dim * (config.n_kv_heads * head_size);
+        ptr += n_layers * config.dim * config.n_kv_heads * head_size;
         weights.wo = ptr;
-        ptr += n_layers * (config.n_heads * head_size) * config.dim;
+        ptr += n_layers * config.n_heads * head_size * config.dim;
         weights.rms_ffn_weight = ptr;
         ptr += n_layers * config.dim;
         weights.w1 = ptr;
@@ -119,8 +115,8 @@ public unsafe class Transformer : IDisposable
         ptr += n_layers * config.dim * config.hidden_dim;
         weights.rms_final_weight = ptr;
         ptr += config.dim;
-        ptr += config.seq_len * head_size / 2; // skip freq_cis_real
-        ptr += config.seq_len * head_size / 2; // skip freq_cis_imag
+        ptr += config.seq_len * head_size / 2;
+        ptr += config.seq_len * head_size / 2;
         weights.wcls = shared_weights != 0 ? weights.token_embedding_table : ptr;
     }
 }

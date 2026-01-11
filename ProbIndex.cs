@@ -1,4 +1,4 @@
-namespace Llama2;
+namespace Llama;
 
 public struct ProbIndex : IComparable<ProbIndex>
 {
