@@ -30,12 +30,11 @@ public unsafe class Engine(IBackend backend)
             // attention rmsnorm
             backend.RmsNorm(s.xb, x, w.rms_att_weight + l * dim, dim);
 
-            // --- FIX START ---
-            // 1. Calculate offsets using the outer 'kv_dim'
+            // Calculate offsets using the outer 'kv_dim'
             long loff = (long)l * p.seq_len * kv_dim;
             long currentOffset = loff + (long)pos * kv_dim;
 
-            // 2. SAFETY CHECK (Calculate limit locally)
+            // SAFETY CHECK (Calculate limit locally)
             //    Total floats = Layers * SeqLen * KVDim
             long totalCacheElements = (long)p.n_layers * p.seq_len * kv_dim;
 
@@ -45,10 +44,9 @@ public unsafe class Engine(IBackend backend)
                 return null; // Stop safely
             }
 
-            // 3. Assign the pointers
+            // Assign the pointers
             s.k = s.keyCache + currentOffset;
             s.v = s.valueCache + currentOffset;
-            // --- FIX END ---
 
             // qkv matmuls
             backend.MatMul(s.q, s.xb, w.wq + (long)l * dim * dim, dim, dim);
@@ -58,12 +56,11 @@ public unsafe class Engine(IBackend backend)
             // RoPE
             for (int i = 0; i < dim; i += 2)
             {
-                int head_dim = i % head_size;
-                float freq = 1.0f / MathF.Pow(10000.0f, head_dim / (float)head_size);
-                float val = pos * freq;
-                float fcr = MathF.Cos(val);
-                float fci = MathF.Sin(val);
-                int rotn = i < kv_dim ? 2 : 1;
+                // Fast lookup, no division or modulo!
+                float fcr = MathF.Cos(pos * s.rope_freq[i / 2]);
+                float fci = MathF.Sin(pos * s.rope_freq[i / 2]);
+
+                int rotn = i < kv_dim ? 2 : 1; // Existing logic
                 for (int v = 0; v < rotn; v++)
                 {
                     float* vec = v == 0 ? s.q : s.k;
@@ -126,13 +123,13 @@ public unsafe class Engine(IBackend backend)
             backend.MatMul(s.hb2, s.xb, w.w3 + (long)l * dim * hidden_dim, dim, hidden_dim);
 
             // SwiGLU
-            for (int i = 0; i < hidden_dim; i++)
+            Parallel.For(0, hidden_dim, i =>
             {
                 float val = s.hb[i];
-                val *= (1.0f / (1.0f + MathF.Exp(-val))); // silu
+                val *= 1.0f / (1.0f + MathF.Exp(-val));
                 val *= s.hb2[i];
                 s.hb[i] = val;
-            }
+            });
 
             backend.MatMul(s.xb, s.hb, w.w2 + (long)l * dim * hidden_dim, hidden_dim, dim);
 

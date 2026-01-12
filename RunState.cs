@@ -19,6 +19,8 @@ public unsafe struct RunState : IDisposable
     public float* keyCache;   // (layer, seq_len, dim)
     public float* valueCache; // (layer, seq_len, dim)
 
+    public float* rope_freq;
+
     private readonly IBackend backend;
 
     public RunState(Config p, IBackend backend)
@@ -49,6 +51,8 @@ public unsafe struct RunState : IDisposable
         // Huge buffers
         keyCache = backend.Allocate<float>(kvBytes);
         valueCache = backend.Allocate<float>(kvBytes);
+
+        rope_freq = backend.Allocate<float>((ulong)(p.dim / 2 * sizeof(float)));
     }
 
     public void Dispose()
@@ -67,5 +71,7 @@ public unsafe struct RunState : IDisposable
         if (logits != null) backend.Free(logits);
         if (keyCache != null) backend.Free(keyCache);
         if (valueCache != null) backend.Free(valueCache);
+
+        if (rope_freq != null) backend.Free(rope_freq);
     }
 }

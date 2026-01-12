@@ -21,6 +21,16 @@ public unsafe class Transformer : IDisposable
 
         ReadCheckpoint(checkpoint_path);
         state = new RunState(config, backend);
+
+        int dim = config.dim;
+        int head_size = dim / config.n_heads;
+
+        for (int i = 0; i < dim; i += 2)
+        {
+            int head_dim = i % head_size;
+            float freq = 1.0f / MathF.Pow(10000.0f, head_dim / (float)head_size);
+            state.rope_freq[i / 2] = freq;
+        }
     }
 
     public void Dispose()
