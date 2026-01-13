@@ -1,4 +1,5 @@
 using Llama.Backends;
+using Llama.Models;
 
 namespace Llama;
 

@@ -1,4 +1,4 @@
-namespace Llama;
+namespace Llama.Models;
 
 public unsafe struct TransformerWeights
 {

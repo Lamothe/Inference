@@ -102,9 +102,4 @@ public unsafe class RocmBackend : IBackend
     {
         return cpuBackend.RandomF32(ref state);
     }
-
-    public int Sample(Sampler s, float* logits)
-    {
-        return cpuBackend.Sample(s, logits);
-    }
 }

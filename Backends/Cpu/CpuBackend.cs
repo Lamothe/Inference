@@ -164,23 +164,4 @@ public unsafe class CpuBackend : IBackend
         uint res = (uint)((state * 0x2545F4914F6CDD1Dul) >> 32);
         return (res >> 8) / 16777216.0f;
     }
-
-    public int Sample(Sampler s, float* logits)
-    {
-        if (s.temperature == 0.0f) return SampleArgmax(logits, s.vocab_size);
-
-        for (int q = 0; q < s.vocab_size; q++) logits[q] /= s.temperature;
-        Softmax(logits, s.vocab_size);
-
-        float coin = RandomF32(ref s.rng_state);
-
-        if (s.topp <= 0 || s.topp >= 1)
-        {
-            return SampleMult(logits, s.vocab_size, coin);
-        }
-        else
-        {
-            return SampleTopp(logits, s.vocab_size, s.topp, s.probindex, coin);
-        }
-    }
 }

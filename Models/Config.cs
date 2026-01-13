@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 
-namespace Llama;
+namespace Llama.Models;
 
 [StructLayout(LayoutKind.Sequential)]
 public struct Config

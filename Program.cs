@@ -2,6 +2,7 @@
 using Llama.Backends;
 using Llama.Backends.Cpu;
 using Llama.Backends.Rocm;
+using Llama.Models.Llama2;
 
 string checkpointPath = "stories110M.bin";
 string tokeniserPath = "tokeniser.bin";
@@ -71,26 +72,34 @@ using IBackend backend = requestedBackend switch
 
 Console.WriteLine(backend.GetDescription());
 
-using var transformer = new Transformer(checkpointPath, backend);
+using var transformer = new Models.Llama2.Llama2Transformer(checkpointPath, backend);
 
-if (steps == 0 || steps > transformer.config.seq_len)
+if (steps == 0 || steps > transformer.Config.seq_len)
 {
-    steps = transformer.config.seq_len;
+    steps = transformer.Config.seq_len;
 }
 
-var tokeniser = new Tokeniser(tokeniserPath, transformer.config.vocab_size);
-var sampler = new Sampler(transformer.config.vocab_size, temperature, topp, rngSeed);
-var engine = new Engine(backend);
+var tokeniser = new Models.Llama2.Llama2Tokeniser(tokeniserPath, transformer.Config.vocab_size);
+var sampler = new Models.Llama2.Llama2Sampler(transformer.Config.vocab_size, temperature, topp, rngSeed);
+var model = new Models.Llama2.Llama2Model(backend);
 
 if (mode == "generate")
 {
-    engine.Generate(transformer, tokeniser, sampler, prompt!, steps);
+    var start = TimeInMs();
+    var tokens = model.Generate(transformer, tokeniser, sampler, prompt!, steps);
+    if (tokens > 1)
+    {
+        long end = TimeInMs();
+        Console.Error.WriteLine($"Token/s: {(tokens - 1) / (double)(end - start) * 1000}");
+    }
 }
 else if (mode == "chat")
 {
-    engine.Chat(transformer, tokeniser, sampler, prompt, systemPrompt, steps);
+    model.Chat(transformer, tokeniser, sampler, prompt, systemPrompt, steps);
 }
 else
 {
     Console.Error.WriteLine("Unknown mode: " + mode);
 }
+
+static long TimeInMs() => DateTimeOffset.Now.ToUnixTimeMilliseconds();

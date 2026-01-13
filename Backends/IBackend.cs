@@ -21,6 +21,4 @@ public unsafe interface IBackend : IDisposable
     int SampleTopp(float* probabilities, int n, float topp, ProbIndex[] probindex, float coin);
 
     float RandomF32(ref ulong state);
-
-    int Sample(Sampler s, float* logits);
 }
