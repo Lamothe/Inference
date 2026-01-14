@@ -72,16 +72,16 @@ using IBackend backend = requestedBackend switch
 
 Console.WriteLine(backend.GetDescription());
 
-using var transformer = new Models.Llama2.Llama2Transformer(checkpointPath, backend);
+using var transformer = new Llama2Transformer(checkpointPath) { Backend = backend };
 
 if (steps == 0 || steps > transformer.Config.seq_len)
 {
     steps = transformer.Config.seq_len;
 }
 
-var tokeniser = new Models.Llama2.Llama2Tokeniser(tokeniserPath, transformer.Config.vocab_size);
-var sampler = new Models.Llama2.Llama2Sampler(transformer.Config.vocab_size, temperature, topp, rngSeed);
-var model = new Models.Llama2.Llama2Model(backend);
+var tokeniser = new LLama2Tokeniser(tokeniserPath, transformer.Config.vocab_size);
+var sampler = new Llama2Sampler(transformer.Config.vocab_size, temperature, topp, rngSeed);
+var model = new Llama2Model(backend);
 
 if (mode == "generate")
 {

@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 namespace Llama.Models;
 
 [StructLayout(LayoutKind.Sequential)]
-public struct Config
+public struct ModelConfig
 {
     public int dim; // transformer dimension
     public int hidden_dim; // for ffn layers

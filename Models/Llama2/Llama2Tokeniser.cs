@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 
 namespace Llama.Models.Llama2;
@@ -84,8 +85,8 @@ public class LLama2Tokeniser
 
         if (!string.IsNullOrEmpty(text))
         {
-            int dummy_prefix = StrLookup(" ", t);
-            tokenList.Add(dummy_prefix);
+            int dummyPrefix = StrLookup(" ");
+            tokenList.Add(dummyPrefix);
         }
 
         // UTF-8 byte processing

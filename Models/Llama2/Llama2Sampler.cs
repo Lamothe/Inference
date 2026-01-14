@@ -10,11 +10,11 @@ public unsafe class Llama2Sampler(int vocab_size, float temperature, float topp,
     public float topp = topp;
     public ulong rng_state = rng_seed;
 
-    public int Sample(float* logits)
+    public int Sample(float* logits, IBackend backend)
     {
         if (temperature == 0.0f)
         {
-            return SampleArgmax(logits, vocab_size);
+            return backend.SampleArgmax(logits, vocab_size);
         }
 
         for (int q = 0; q < vocab_size; q++)
@@ -22,17 +22,17 @@ public unsafe class Llama2Sampler(int vocab_size, float temperature, float topp,
             logits[q] /= temperature;
         }
 
-        Softmax(logits, vocab_size);
+        backend.Softmax(logits, vocab_size);
 
-        float coin = RandomF32(ref rng_state);
+        float coin = backend.RandomF32(ref rng_state);
 
         if (topp <= 0 || topp >= 1)
         {
-            return SampleMult(logits, vocab_size, coin);
+            return backend.SampleMult(logits, vocab_size, coin);
         }
         else
         {
-            return SampleTopp(logits, vocab_size, topp, probindex, coin);
+            return backend.SampleTopp(logits, vocab_size, topp, probindex, coin);
         }
     }
 }

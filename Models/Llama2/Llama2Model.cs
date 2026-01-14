@@ -5,7 +5,7 @@ using Llama.Backends;
 
 namespace Llama.Models.Llama2;
 
-public unsafe class Llama2Model
+public unsafe class Llama2Model(IBackend backend)
 {
     public static void SafePrint(string piece)
     {
@@ -30,18 +30,20 @@ public unsafe class Llama2Model
     {
         prompt ??= "";
         var promptTokens = new int[prompt.Length + 3];
-        tokeniser.Encode(tokeniser, prompt, true, false, promptTokens, out int numberOfPromptTokens);
+        tokeniser.Encode(prompt, true, false, promptTokens, out int numberOfPromptTokens);
 
-        if (numberOfPromptTokens < 1) return;
+        if (numberOfPromptTokens < 1)
+        {
+            return 0;
+        }
 
-        long start = 0;
         int next;
         int token = promptTokens[0];
         int tokenNumber = 0;
 
         while (tokenNumber < steps)
         {
-            float* logits = Forward(transformer, token, tokenNumber);
+            float* logits = transformer.Forward(token, tokenNumber);
 
             if (tokenNumber < numberOfPromptTokens - 1)
             {
@@ -49,7 +51,7 @@ public unsafe class Llama2Model
             }
             else
             {
-                next = backend.Sample(sampler, logits);
+                next = sampler.Sample(logits, backend);
             }
             tokenNumber++;
 
@@ -58,7 +60,7 @@ public unsafe class Llama2Model
                 break;
             }
 
-            var piece = tokeniser.Decode(tokeniser, token, next);
+            var piece = tokeniser.Decode(token, next);
             SafePrint(piece);
             token = next;
         }
@@ -121,7 +123,7 @@ public unsafe class Llama2Model
                     rendered_prompt = $"[INST] {user_prompt} [/INST]";
                 }
 
-                tokeniser.Encode(tokeniser, rendered_prompt, true, false, prompt_tokens, out num_prompt_tokens);
+                tokeniser.Encode(rendered_prompt, true, false, prompt_tokens, out num_prompt_tokens);
                 user_idx = 0;
                 user_turn = false;
                 Console.Write("Assistant: ");
@@ -141,13 +143,13 @@ public unsafe class Llama2Model
                 user_turn = true;
             }
 
-            float* logits = Forward(transformer, token, pos);
-            next = sampler.Sample(sampler, logits);
+            float* logits = transformer.Forward(token, pos);
+            next = sampler.Sample(logits, backend);
             pos++;
 
             if (user_idx >= num_prompt_tokens && next != 2)
             {
-                var piece = tokeniser.Decode(tokeniser, token, next);
+                var piece = tokeniser.Decode(token, next);
                 SafePrint(piece);
             }
 

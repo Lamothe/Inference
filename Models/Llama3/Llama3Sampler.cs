@@ -2,17 +2,14 @@ using Llama.Backends;
 
 namespace Llama.Models.Llama3;
 
-public class Llama3Sampler(int vocabSize, float temperature, float topp, ulong rngState)
+public class Llama3Sampler(int vocabSize, float temperature, float topp, int seed)
 {
-    public int vocabSize = vocabSize;
     public ProbIndex[] probindex = new ProbIndex[vocabSize];
-    public float temperature = temperature;
-    public float topp = topp;
-    public ulong rngState = rngState;
+    private readonly Random rng = new(seed);
 
-    public int Sample(float[] logits)
+    public unsafe int Sample(float* logits)
     {
-        // 1. Temperature
+        // Temperature
         if (temperature == 0.0f)
         {
             // Argmax
@@ -29,7 +26,11 @@ public class Llama3Sampler(int vocabSize, float temperature, float topp, ulong r
         for (int i = 0; i < vocabSize; i++) logits[i] /= temperature;
 
         // Softmax
-        float max_val = logits.Max();
+        float max_val = logits[0];
+        for (int i = 1; i < vocabSize; i++)
+        {
+            if (logits[i] > max_val) max_val = logits[i];
+        }
         float sum = 0.0f;
         for (int i = 0; i < vocabSize; i++)
         {

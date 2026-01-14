@@ -4,7 +4,7 @@ namespace Llama.Models.Llama3;
 
 public unsafe class Llama3Model
 {
-    public void Generate(Llama3Transformer transformer, Llama3Tokeniser tokeniser, Llama3Sampler s, string prompt, int steps)
+    public void Generate(Llama3Transformer transformer, Llama3Tokeniser tokeniser, Llama3Sampler sampler, string prompt, int steps)
     {
         var tokens = tokeniser.Encode(prompt, true, false);
         int token = tokens.Length > 0 ? tokens[0] : 128000; // BOS if empty
@@ -17,7 +17,7 @@ public unsafe class Llama3Model
 
         while (pos < steps)
         {
-            float[] logits = transformer.Forward(token, pos);
+            float* logits = transformer.Forward(token, pos);
 
             if (pos < tokens.Length - 1)
             {
@@ -25,7 +25,7 @@ public unsafe class Llama3Model
             }
             else
             {
-                next = s.Sample(logits);
+                next = sampler.Sample(logits);
             }
             pos++;
 
@@ -66,7 +66,7 @@ public unsafe class Llama3Model
         while (true)
         {
             Console.Write("User: ");
-            string input = Console.ReadLine();
+            var input = Console.ReadLine();
             if (input == "exit") break;
 
             // Format: <|start_header_id|>user<|end_header_id|>\n\n{input}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n
@@ -80,7 +80,7 @@ public unsafe class Llama3Model
             }
 
             Console.Write("Assistant: ");
-            while (pos < transformer.config.seq_len)
+            while (pos < transformer.Config.seq_len)
             {
                 var logits = transformer.Forward(token, pos);
                 int next = s.Sample(logits);

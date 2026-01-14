@@ -9,13 +9,11 @@ public unsafe class Llama3Transformer : Transformer
         this.Backend = backend;
 
         Weights = new TransformerWeights();
-        State = new RunState();
-
         using var fs = new FileStream(checkpointPath, FileMode.Open, FileAccess.Read);
         using var br = new BinaryReader(fs);
 
         // Read Config
-        Config = new Config
+        Config = new ModelConfig
         {
             dim = br.ReadInt32(),
             hidden_dim = br.ReadInt32(),
@@ -29,72 +27,128 @@ public unsafe class Llama3Transformer : Transformer
         var sharedWeights = Config.vocab_size > 0;
         Config.vocab_size = Math.Abs(Config.vocab_size);
 
-        // Read Weights
-        int dim = Config.dim;
-        int hidden_dim = Config.hidden_dim;
-        int n_layers = Config.n_layers;
-        int head_size = dim / Config.n_heads;
-        int kv_heads = Config.n_kv_heads;
+        State = new RunState(Config, Backend);
 
-        static float[] ReadFloats(long count)
+        long headerSize = br.BaseStream.Position;
+        long totalFileSize = br.BaseStream.Length;
+        long weightsSizeInBytes = totalFileSize - headerSize;
+
+        // Allocate ONE giant lump of unmanaged memory
+        // Store this pointer in your class so you can Free() it later!
+        void* masterMemoryBlock = System.Runtime.InteropServices.NativeMemory.Alloc((nuint)weightsSizeInBytes);
+
+        // Read the file content directly into this memory
+        // We have to loop because Stream.Read only accepts 'int' (max 2GB per read)
+        // but models can be much larger.
         {
-            var bytes = br.ReadBytes((int)(count * sizeof(float)));
-            var floats = new float[count];
-            Buffer.BlockCopy(bytes, 0, floats, 0, bytes.Length);
-            return floats;
+            byte* writePtr = (byte*)masterMemoryBlock;
+            long bytesRemaining = weightsSizeInBytes;
+            Stream stream = br.BaseStream;
+
+            // Use a Span to write directly to unmanaged memory
+            while (bytesRemaining > 0)
+            {
+                // Read up to 1GB at a time (safe margin below int.MaxValue)
+                int chunkSize = (int)Math.Min(bytesRemaining, 1024 * 1024 * 1024);
+                var destSpan = new Span<byte>(writePtr, chunkSize);
+
+                int read = stream.Read(destSpan);
+                if (read == 0) throw new EndOfStreamException("Unexpected end of file while reading weights.");
+
+                bytesRemaining -= read;
+                writePtr += read;
+            }
         }
 
-        Weights.token_embedding_table = ReadFloats(Config.vocab_size * dim);
-        Weights.rms_att_weight = ReadFloats(n_layers * dim);
-        Weights.wq = ReadFloats(n_layers * dim * (Config.n_heads * head_size));
-        Weights.wk = ReadFloats(n_layers * dim * (kv_heads * head_size));
-        Weights.wv = ReadFloats(n_layers * dim * (kv_heads * head_size));
-        Weights.wo = ReadFloats(n_layers * (Config.n_heads * head_size) * dim);
-        Weights.rms_ffn_weight = ReadFloats(n_layers * dim);
-        Weights.w1 = ReadFloats(n_layers * dim * hidden_dim);
-        Weights.w2 = ReadFloats(n_layers * hidden_dim * dim);
-        Weights.w3 = ReadFloats(n_layers * dim * hidden_dim);
-        Weights.rms_final_weight = ReadFloats(dim);
+        // Set the pointers (Pointer Arithmetic)
+        // We now walk through the memory we just loaded.
+        float* ptr = (float*)masterMemoryBlock;
 
-        // Skip RoPE freq_cis_real and freq_cis_imag (precomputed in C, but usually skipped in inference if computed on fly)
-        // The C code skips: p->seq_len * head_size / 2; (twice)
-        var ropeChunk = Config.seq_len * head_size / 2;
-        fs.Seek(ropeChunk * sizeof(float) * 2, SeekOrigin.Current);
+        // Helpers for calculating offsets
+        long n_layers = Config.n_layers;
+        long dim = Config.dim;
+        long head_size = dim / Config.n_heads;
+        long kv_heads = Config.n_kv_heads;
+        long hidden_dim = Config.hidden_dim;
 
-        Weights.wcls = sharedWeights ? Weights.token_embedding_table : ReadFloats(Config.vocab_size * dim);
+        Weights.token_embedding_table = ptr;
+        ptr += (long)Config.vocab_size * dim;
 
-        State.Initialize(Config);
+        Weights.rms_att_weight = ptr;
+        ptr += n_layers * dim;
+
+        Weights.wq = ptr;
+        ptr += n_layers * dim * (Config.n_heads * head_size);
+
+        Weights.wk = ptr;
+        ptr += n_layers * dim * (kv_heads * head_size);
+
+        Weights.wv = ptr;
+        ptr += n_layers * dim * (kv_heads * head_size);
+
+        Weights.wo = ptr;
+        ptr += n_layers * (Config.n_heads * head_size) * dim;
+
+        Weights.rms_ffn_weight = ptr;
+        ptr += n_layers * dim;
+
+        Weights.w1 = ptr;
+        ptr += n_layers * dim * hidden_dim;
+
+        Weights.w2 = ptr;
+        ptr += n_layers * hidden_dim * dim;
+
+        Weights.w3 = ptr;
+        ptr += n_layers * dim * hidden_dim;
+
+        Weights.rms_final_weight = ptr;
+        ptr += dim;
+
+        // Skip RoPE frequencies (legacy artifact in .bin files)
+        // C code skips: seq_len * head_size / 2 (real) + seq_len * head_size / 2 (imag)
+        ptr += (long)Config.seq_len * head_size;
+
+        // Handle Classifier Weights
+        if (sharedWeights)
+        {
+            Weights.wcls = Weights.token_embedding_table;
+            // Note: We don't increment ptr here because we are reusing the earlier address
+        }
+        else
+        {
+            Weights.wcls = ptr;
+            ptr += (long)Config.vocab_size * dim;
+        }
     }
 
-    public float[] Forward(int token, int position)
+    public float* Forward(int token, int position)
     {
         int dim = Config.dim;
-        int kv_dim = (Config.dim * Config.n_kv_heads) / Config.n_heads;
+        int kv_dim = Config.dim * Config.n_kv_heads / Config.n_heads;
         int kv_mul = Config.n_heads / Config.n_kv_heads;
         int hidden_dim = Config.hidden_dim;
         int head_size = dim / Config.n_heads;
 
         // Copy token embedding into x
-        new Span<float>(Weights.token_embedding_table, token * dim, dim).CopyTo(State.x);
+        System.Buffer.MemoryCopy(Weights.token_embedding_table + token * dim, State.x, dim * sizeof(float), dim * sizeof(float));
 
         for (int l = 0; l < Config.n_layers; l++)
         {
             // Attention RMSNorm
-            backend.RmsNorm(State.xb, State.x, new Span<float>(Weights.rms_att_weight, l * dim, dim));
+            Backend.RmsNorm(State.xb, State.x, Weights.rms_att_weight + l * dim, dim);
 
             // Key/Value cache offsets
-            int loff = l * Config.seq_len * kv_dim;
+            long loff = (long)l * Config.seq_len * kv_dim;
 
             // QKV Matmuls
             // s.q = wq @ xb
-            backend.MatMul(State.q, State.xb, new Span<float>(Weights.wq, l * dim * dim, dim * dim), dim, dim);
+            Backend.MatMul(State.q, State.xb, Weights.wq + (long)l * dim * dim, dim, dim);
             // k_cache[pos] = wk @ xb (write directly to cache)
-            // Note: In C code s->k pointer is set to cache position. Here we map via Span.
-            var k_span = new Span<float>(State.key_cache, loff + position * kv_dim, kv_dim);
-            backend.MatMul(k_span, State.xb, new Span<float>(Weights.wk, l * dim * kv_dim, dim * kv_dim), dim, kv_dim);
+            State.k = State.keyCache + loff + position * kv_dim;
+            Backend.MatMul(State.k, State.xb, Weights.wk + (long)l * dim * kv_dim, dim, kv_dim);
             // v_cache[pos] = wv @ xb
-            var v_span = new Span<float>(State.value_cache, loff + position * kv_dim, kv_dim);
-            backend.MatMul(v_span, State.xb, new Span<float>(Weights.wv, l * dim * kv_dim, dim * kv_dim), dim, kv_dim);
+            State.v = State.valueCache + loff + position * kv_dim;
+            Backend.MatMul(State.v, State.xb, Weights.wv + (long)l * dim * kv_dim, dim, kv_dim);
 
             // RoPE
             for (int i = 0; i < Config.n_heads; i++)
@@ -117,10 +171,10 @@ public unsafe class Llama3Transformer : Transformer
                     if (i < Config.n_kv_heads)
                     {
                         int k_idx = i * head_size + j; // indexing into the current k_span (size kv_dim)
-                        float k0 = k_span[k_idx];
-                        float k1 = k_span[k_idx + 1];
-                        k_span[k_idx] = k0 * fcr - k1 * fci;
-                        k_span[k_idx + 1] = k0 * fci + k1 * fcr;
+                        float k0 = State.k[k_idx];
+                        float k1 = State.k[k_idx + 1];
+                        State.k[k_idx] = k0 * fcr - k1 * fci;
+                        State.k[k_idx + 1] = k0 * fci + k1 * fcr;
                     }
                 }
             }
@@ -139,40 +193,44 @@ public unsafe class Llama3Transformer : Transformer
                     // Get K vector for this head at timestep t
                     // Offset: layer_offset + time_offset + head_offset
                     int k_head_offset = (h / kv_mul) * head_size;
-                    int k_ptr_offset = loff + t * kv_dim + k_head_offset;
+                    long k_ptr_offset = loff + t * kv_dim + k_head_offset;
 
                     float score = 0.0f;
+                    float* q_ptr = State.q + q_offset;
+                    float* k_ptr = State.keyCache + k_ptr_offset;
                     for (int i = 0; i < head_size; i++)
                     {
-                        score += State.q[q_offset + i] * State.key_cache[k_ptr_offset + i];
+                        score += q_ptr[i] * k_ptr[i];
                     }
                     score /= MathF.Sqrt(head_size);
                     State.att[att_offset + t] = score;
                 }
 
                 // Softmax
-                Softmax(new Span<float>(State.att, att_offset, position + 1), position + 1);
+                Backend.Softmax(State.att + att_offset, position + 1);
 
                 // Weighted sum of values -> xb
                 int xb_offset = h * head_size;
                 // Clear xb slice
-                Array.Clear(State.xb, xb_offset, head_size);
+                float* xb_ptr = State.xb + xb_offset;
+                for (int i = 0; i < head_size; i++) xb_ptr[i] = 0f;
 
                 for (int t = 0; t <= position; t++)
                 {
                     int v_head_offset = (h / kv_mul) * head_size;
-                    int v_ptr_offset = loff + t * kv_dim + v_head_offset;
+                    long v_ptr_offset = loff + t * kv_dim + v_head_offset;
                     float a = State.att[att_offset + t];
+                    float* v_ptr = State.valueCache + v_ptr_offset;
 
                     for (int i = 0; i < head_size; i++)
                     {
-                        State.xb[xb_offset + i] += a * State.value_cache[v_ptr_offset + i];
+                        xb_ptr[i] += a * v_ptr[i];
                     }
                 }
             });
 
             // Final attention matmul
-            backend.MatMul(State.xb2, State.xb, new Span<float>(Weights.wo, l * dim * dim, dim * dim), dim, dim);
+            Backend.MatMul(State.xb2, State.xb, Weights.wo + (long)l * dim * dim, dim, dim);
 
             // Residual connection
             for (int i = 0; i < dim; i++)
@@ -181,11 +239,11 @@ public unsafe class Llama3Transformer : Transformer
             }
 
             // FFN RMSNorm
-            backend.RmsNorm(State.xb, State.x, new Span<float>(Weights.rms_ffn_weight, l * dim, dim));
+            Backend.RmsNorm(State.xb, State.x, Weights.rms_ffn_weight + l * dim, dim);
 
             // FFN Matmuls
-            backend.MatMul(State.hb, State.xb, new Span<float>(Weights.w1, l * dim * hidden_dim, dim * hidden_dim), hidden_dim, dim);
-            backend.MatMul(State.hb2, State.xb, new Span<float>(Weights.w3, l * dim * hidden_dim, dim * hidden_dim), hidden_dim, dim);
+            Backend.MatMul(State.hb, State.xb, Weights.w1 + (long)l * dim * hidden_dim, hidden_dim, dim);
+            Backend.MatMul(State.hb2, State.xb, Weights.w3 + (long)l * dim * hidden_dim, hidden_dim, dim);
 
             // SwiGLU
             for (int i = 0; i < hidden_dim; i++)
@@ -197,17 +255,17 @@ public unsafe class Llama3Transformer : Transformer
             }
 
             // Final FFN Matmul
-            backend.MatMul(State.xb, State.hb, new Span<float>(Weights.w2, l * dim * hidden_dim, hidden_dim * dim), dim, hidden_dim);
+            Backend.MatMul(State.xb, State.hb, Weights.w2 + (long)l * dim * hidden_dim, dim, hidden_dim);
 
             // Residual
             for (int i = 0; i < dim; i++) State.x[i] += State.xb[i];
         }
 
         // Final RMSNorm
-        backend.RmsNorm(State.x, State.x, new Span<float>(Weights.rms_final_weight, 0, dim));
+        Backend.RmsNorm(State.x, State.x, Weights.rms_final_weight, dim);
 
         // Classifier
-        backend.MatMul(State.logits, State.x, new Span<float>(Weights.wcls, 0, Config.vocab_size * dim), Config.vocab_size, dim);
+        Backend.MatMul(State.logits, State.x, Weights.wcls, Config.vocab_size, dim);
 
         return State.logits;
     }

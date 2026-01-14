@@ -24,7 +24,7 @@ public unsafe struct RunState : IDisposable
 
     private readonly IBackend backend;
 
-    public RunState(Config p, IBackend backend)
+    public RunState(ModelConfig p, IBackend backend)
     {
         this.backend = backend;
 

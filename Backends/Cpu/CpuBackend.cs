@@ -78,14 +78,19 @@ public unsafe class CpuBackend : IBackend
         float max_val = x[0];
         for (int i = 1; i < size; i++)
         {
-            if (x[i] > max_val) max_val = x[i];
+            if (x[i] > max_val)
+            {
+                max_val = x[i];
+            }
         }
+
         float sum = 0.0f;
         for (int i = 0; i < size; i++)
         {
             x[i] = MathF.Exp(x[i] - max_val);
             sum += x[i];
         }
+
         for (int i = 0; i < size; i++)
         {
             x[i] /= sum;

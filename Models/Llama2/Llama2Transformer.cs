@@ -1,3 +1,4 @@
+using System.Numerics.Tensors;
 using System.Runtime.InteropServices;
 using Llama.Backends;
 using Llama.Models;
@@ -6,12 +7,10 @@ namespace Llama.Models.Llama2;
 
 public unsafe class Llama2Transformer : Transformer, IDisposable
 {
-    public Llama2Transformer(string checkpoint_path, IBackend backend)
+    public Llama2Transformer(string checkpoint_path)
     {
-        Backend = backend;
-
         ReadCheckpoint(checkpoint_path);
-        State = new RunState(Config, Backend);
+        State = new RunState(Config, Backend!);
 
         var dim = Config.dim;
         var head_size = dim / Config.n_heads;
@@ -20,19 +19,15 @@ public unsafe class Llama2Transformer : Transformer, IDisposable
         {
             var head_dim = i % head_size;
             var freq = 1.0f / MathF.Pow(10000.0f, head_dim / (float)head_size);
-            state.rope_freq[i / 2] = freq;
+            State.rope_freq[i / 2] = freq;
         }
     }
 
     public void Dispose()
     {
         State.Dispose();
-
-        if (Data != null)
-        {
-            Backend.Free(Data);
-            Data = null;
-        }
+        Backend?.Free(Data);
+        Data = null;
     }
 
     public void ReadCheckpoint(string checkpointPath)
@@ -46,11 +41,11 @@ public unsafe class Llama2Transformer : Transformer, IDisposable
         using var fs = new FileStream(checkpointPath, FileMode.Open, FileAccess.Read);
 
         // Read Config
-        var configBytes = new byte[sizeof(Config)];
-        fs.ReadExactly(configBytes, 0, sizeof(Config));
+        var configBytes = new byte[sizeof(ModelConfig)];
+        fs.ReadExactly(configBytes, 0, sizeof(ModelConfig));
         fixed (byte* pConfig = configBytes)
         {
-            Config = *(Config*)pConfig;
+            Config = *(ModelConfig*)pConfig;
         }
 
         var sharedWeights = Config.vocab_size > 0 ? 1 : 0;
@@ -68,7 +63,7 @@ public unsafe class Llama2Transformer : Transformer, IDisposable
         }
 
         // Read the file into the pinned memory
-        Console.WriteLine($"Loading model ({TotalByteSizeotalByteSize / 1024 / 1024} MB) into memory...");
+        Console.WriteLine($"Loading model ({TotalByteSize / 1024 / 1024} MB) into memory...");
 
         // Rewind to start to read everything including config (to keep offsets simple)
         fs.Position = 0;
@@ -85,7 +80,7 @@ public unsafe class Llama2Transformer : Transformer, IDisposable
 
         // Set up the weight pointers
         // Offset by config size (exactly like run.c)
-        var weightsPointer = (float*)((byte*)Data + sizeof(Config));
+        var weightsPointer = (float*)((byte*)Data + sizeof(ModelConfig));
         MemoryMapWeights(weightsPointer, sharedWeights);
     }
 
@@ -123,7 +118,7 @@ public unsafe class Llama2Transformer : Transformer, IDisposable
 
     public float* Forward(int token, int pos)
     {
-        Config p = Config;
+        ModelConfig p = Config;
         TransformerWeights w = Weights;
         RunState s = State;
         float* x = s.x;
