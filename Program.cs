@@ -72,7 +72,7 @@ using IBackend backend = requestedBackend switch
 
 Console.WriteLine(backend.GetDescription());
 
-using var transformer = new Llama2Transformer(checkpointPath) { Backend = backend };
+using var transformer = new Llama2Transformer(checkpointPath, backend);
 
 if (steps == 0 || steps > transformer.Config.seq_len)
 {

@@ -4,9 +4,11 @@ namespace Llama.Models.Llama3;
 
 public unsafe class Llama3Transformer : Transformer
 {
+    private readonly IBackend Backend;
+
     public Llama3Transformer(string checkpointPath, IBackend backend)
     {
-        this.Backend = backend;
+        Backend = backend;
 
         Weights = new TransformerWeights();
         using var fs = new FileStream(checkpointPath, FileMode.Open, FileAccess.Read);
@@ -27,7 +29,7 @@ public unsafe class Llama3Transformer : Transformer
         var sharedWeights = Config.vocab_size > 0;
         Config.vocab_size = Math.Abs(Config.vocab_size);
 
-        State = new RunState(Config, Backend);
+        State = new RunState(Config, backend);
 
         long headerSize = br.BaseStream.Position;
         long totalFileSize = br.BaseStream.Length;

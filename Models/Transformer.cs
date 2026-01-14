@@ -10,6 +10,4 @@ public unsafe class Transformer
 
     public float* Data;
     public ulong TotalByteSize;
-
-    public required IBackend Backend;
 }

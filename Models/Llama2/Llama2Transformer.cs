@@ -7,10 +7,14 @@ namespace Llama.Models.Llama2;
 
 public unsafe class Llama2Transformer : Transformer, IDisposable
 {
-    public Llama2Transformer(string checkpoint_path)
+    private readonly IBackend Backend;
+
+    public Llama2Transformer(string checkpoint_path, IBackend backend)
     {
+        Backend = backend;
+
         ReadCheckpoint(checkpoint_path);
-        State = new RunState(Config, Backend!);
+        State = new RunState(Config, backend);
 
         var dim = Config.dim;
         var head_size = dim / Config.n_heads;
@@ -26,7 +30,6 @@ public unsafe class Llama2Transformer : Transformer, IDisposable
     public void Dispose()
     {
         State.Dispose();
-        Backend?.Free(Data);
         Data = null;
     }
 
