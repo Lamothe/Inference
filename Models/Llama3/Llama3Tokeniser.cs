@@ -42,8 +42,13 @@ public class Llama3Tokeniser
 
     public string Decode(int token)
     {
-        if (token < 0 || token >= vocab_size) return "";
+        if (token < 0 || token >= vocab_size)
+        {
+            return "";
+        }
+
         var piece = vocab[token];
+
         // Handle <0xXX> tokens
         if (piece.StartsWith("<0x") && piece.EndsWith(">"))
         {
