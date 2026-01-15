@@ -4,7 +4,7 @@ namespace Llama.Models.Llama3;
 
 public unsafe class Llama3Model(IBackend backend)
 {
-    public void Generate(Transformer transformer, Llama3Tokeniser tokeniser, Llama3Sampler sampler, string prompt, int steps)
+    public int Generate(Transformer transformer, Llama3Tokeniser tokeniser, Llama3Sampler sampler, string prompt, int steps)
     {
         var tokens = tokeniser.Encode(prompt, true, false);
         int token = tokens.Length > 0 ? tokens[0] : 128000; // BOS if empty
@@ -46,6 +46,8 @@ public unsafe class Llama3Model(IBackend backend)
             double seconds = (end - start) / 10_000_000.0;
             Console.WriteLine($"Tokens per second: {(pos - 1) / seconds:F2}");
         }
+
+        return pos;
     }
 
     public void Chat(Transformer transformer, Llama3Tokeniser tokeniser, Llama3Sampler sampler, int steps)
@@ -69,7 +71,6 @@ public unsafe class Llama3Model(IBackend backend)
             var input = Console.ReadLine();
             if (input == "exit") break;
 
-            // Format: <|start_header_id|>user<|end_header_id|>\n\n{input}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n
             string formatted = $"<|start_header_id|>user<|end_header_id|>\n\n{input}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n";
             var userTokens = tokeniser.Encode(formatted, false, false);
 

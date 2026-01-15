@@ -6,7 +6,7 @@ using Llama.Models.Llama2;
 using Llama.Models.Llama3;
 
 string checkpointPath = "stories110M.bin";
-string tokeniserPath = "tokeniser.bin";
+string? tokeniserPath = null;
 float temperature = 1.0f;
 float topp = 0.9f;
 int steps = 256;
@@ -80,20 +80,13 @@ if (steps == 0 || steps > transformer.Config.seq_len)
 
 if (transformer.ModelVersion == ModelVersion.Llama2)
 {
-
-    var tokeniser = new LLama2Tokeniser(tokeniserPath, transformer.Config.vocab_size);
+    var tokeniser = new LLama2Tokeniser(tokeniserPath ?? "Models/Llama2/tokeniser.bin", transformer.Config.vocab_size);
     var sampler = new Llama2Sampler(transformer.Config.vocab_size, temperature, topp, seed);
     var model = new Llama2Model(backend);
 
     if (mode == "generate")
     {
-        var start = TimeInMs();
-        var tokens = model.Generate(transformer, tokeniser, sampler, prompt ?? string.Empty, steps);
-        if (tokens > 1)
-        {
-            long end = TimeInMs();
-            Console.Error.WriteLine($"Token/s: {(tokens - 1) / (double)(end - start) * 1000}");
-        }
+        BenchmarkResults(() => model.Generate(transformer, tokeniser, sampler, prompt ?? string.Empty, steps));
     }
     else if (mode == "chat")
     {
@@ -103,18 +96,16 @@ if (transformer.ModelVersion == ModelVersion.Llama2)
     {
         Console.Error.WriteLine("Unknown mode: " + mode);
     }
-
-    static long TimeInMs() => DateTimeOffset.Now.ToUnixTimeMilliseconds();
 }
 else if (transformer.ModelVersion == ModelVersion.Llama3)
 {
-    var tokeniser = new Llama3Tokeniser(tokeniserPath, transformer.Config.vocab_size);
+    var tokeniser = new Llama3Tokeniser(tokeniserPath ?? "Models/Llama3/tokeniser.bin", transformer.Config.vocab_size);
     var sampler = new Llama3Sampler(transformer.Config.vocab_size, temperature, topp, seed);
     var model = new Llama3Model(backend);
 
     if (mode == "generate")
     {
-        model.Generate(transformer, tokeniser, sampler, prompt ?? string.Empty, steps);
+        BenchmarkResults(() => model.Generate(transformer, tokeniser, sampler, prompt ?? string.Empty, steps));
     }
     else if (mode == "chat")
     {
@@ -128,4 +119,14 @@ else if (transformer.ModelVersion == ModelVersion.Llama3)
 else
 {
     Console.Error.WriteLine("Unknown model version");
+}
+
+static long TimeInMs() => DateTimeOffset.Now.ToUnixTimeMilliseconds();
+
+static void BenchmarkResults(Func<int> func)
+{
+    var start = TimeInMs();
+    var tokens = func();
+    long end = TimeInMs();
+    Console.Error.WriteLine($"Token/s: {(tokens - 1) / (double)(end - start) * 1000}");
 }

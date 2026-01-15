@@ -15,28 +15,27 @@ public class Llama3Tokeniser
         vocab_size = size;
         vocab = new string[size];
         vocab_scores = new float[size];
-        sorted_vocab = new Dictionary<string, int>();
+        sorted_vocab = [];
 
-        using (var fs = new FileStream(path, FileMode.Open))
-        using (var br = new BinaryReader(fs))
+        using var fs = new FileStream(path, FileMode.Open);
+        using var br = new BinaryReader(fs);
+
+        max_token_length = br.ReadInt32();
+        for (int i = 0; i < size; i++)
         {
-            max_token_length = br.ReadInt32();
-            for (int i = 0; i < size; i++)
-            {
-                vocab_scores[i] = br.ReadSingle();
-                int len = br.ReadInt32();
-                byte[] bytes = br.ReadBytes(len);
-                // raw bytes -> string (Llama 3 uses byte-level BPE, so we keep 1:1 mapping where possible)
-                // For simplicity in C#, we treat the vocab as ISO-8859-1 (raw bytes) or UTF8 depending on impl.
-                // Standard Llama 3 is UTF-8 based.
-                vocab[i] = Encoding.UTF8.GetString(bytes);
+            vocab_scores[i] = br.ReadSingle();
+            int len = br.ReadInt32();
+            byte[] bytes = br.ReadBytes(len);
+            // raw bytes -> string (Llama 3 uses byte-level BPE, so we keep 1:1 mapping where possible)
+            // For simplicity in C#, we treat the vocab as ISO-8859-1 (raw bytes) or UTF8 depending on impl.
+            // Standard Llama 3 is UTF-8 based.
+            vocab[i] = Encoding.UTF8.GetString(bytes);
 
-                // Add to lookup if unique (handled lazily in C, here we build dict)
-                // Note: Binary vocab might contain duplicates for different merge levels? 
-                // C code sorts valid keys. We'll just try/catch add.
-                if (!sorted_vocab.ContainsKey(vocab[i]))
-                    sorted_vocab[vocab[i]] = i;
-            }
+            // Add to lookup if unique (handled lazily in C, here we build dict)
+            // Note: Binary vocab might contain duplicates for different merge levels? 
+            // C code sorts valid keys. We'll just try/catch add.
+            if (!sorted_vocab.ContainsKey(vocab[i]))
+                sorted_vocab[vocab[i]] = i;
         }
     }
 
