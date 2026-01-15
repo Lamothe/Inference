@@ -2,12 +2,11 @@ using Llama.Backends;
 
 namespace Llama.Models.Llama3;
 
-public class Llama3Sampler(int vocabSize, float temperature, float topp, int seed)
+public class Llama3Sampler(int vocabSize, float temperature, float topp, ulong seed)
 {
     public ProbIndex[] probindex = new ProbIndex[vocabSize];
-    private readonly Random rng = new(seed);
 
-    public unsafe int Sample(float* logits)
+    public unsafe int Sample(float* logits, IBackend backend)
     {
         // Temperature
         if (temperature == 0.0f)
@@ -44,7 +43,7 @@ public class Llama3Sampler(int vocabSize, float temperature, float topp, int see
         }
 
         // 2. Sampling
-        float coin = (float)rng.NextDouble();
+        float coin = backend.RandomF32(ref seed);
 
         if (topp <= 0 || topp >= 1)
         {

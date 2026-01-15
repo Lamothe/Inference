@@ -1,6 +1,3 @@
-using System.Globalization;
-using System.Numerics.Tensors;
-using System.Text;
 using Llama.Backends;
 
 namespace Llama.Models.Llama2;
@@ -26,7 +23,7 @@ public unsafe class Llama2Model(IBackend backend)
         Console.Write(piece);
     }
 
-    public int Generate(Llama2Transformer transformer, LLama2Tokeniser tokeniser, Llama2Sampler sampler, string prompt, int steps)
+    public int Generate(Transformer transformer, LLama2Tokeniser tokeniser, Llama2Sampler sampler, string prompt, int steps)
     {
         prompt ??= "";
         var promptTokens = new int[prompt.Length + 3];
@@ -69,7 +66,7 @@ public unsafe class Llama2Model(IBackend backend)
         return tokenNumber;
     }
 
-    public void Chat(Llama2Transformer transformer, LLama2Tokeniser tokeniser, Llama2Sampler sampler, string? cli_user, string? cli_sys, int steps)
+    public void Chat(Transformer transformer, LLama2Tokeniser tokeniser, Llama2Sampler sampler, int steps)
     {
         string system_prompt = "";
         string user_prompt = "";
@@ -85,33 +82,9 @@ public unsafe class Llama2Model(IBackend backend)
         {
             if (user_turn)
             {
-                if (pos == 0)
-                {
-                    if (cli_sys == null)
-                    {
-                        Console.Write("Enter system prompt (optional): ");
-                        var input = Console.ReadLine();
-                        if (input != null)
-                        {
-                            system_prompt = input;
-                        }
-                    }
-                    else
-                    {
-                        system_prompt = cli_sys;
-                    }
-                }
-
-                if (pos == 0 && cli_user != null)
-                {
-                    user_prompt = cli_user;
-                }
-                else
-                {
-                    Console.Write("User: ");
-                    var input = Console.ReadLine();
-                    user_prompt = input ?? "";
-                }
+                Console.Write("User: ");
+                var input = Console.ReadLine();
+                user_prompt = input ?? "";
 
                 string rendered_prompt;
                 if (pos == 0 && !string.IsNullOrEmpty(system_prompt))

@@ -8,7 +8,6 @@ public unsafe class Llama2Sampler(int vocab_size, float temperature, float topp,
     public ProbIndex[] probindex = new ProbIndex[vocab_size];
     public float temperature = temperature;
     public float topp = topp;
-    public ulong rng_state = rng_seed;
 
     public int Sample(float* logits, IBackend backend)
     {
@@ -24,7 +23,7 @@ public unsafe class Llama2Sampler(int vocab_size, float temperature, float topp,
 
         backend.Softmax(logits, vocab_size);
 
-        float coin = backend.RandomF32(ref rng_state);
+        float coin = backend.RandomF32(ref rng_seed);
 
         if (topp <= 0 || topp >= 1)
         {

@@ -2,9 +2,9 @@ using Llama.Backends;
 
 namespace Llama.Models.Llama3;
 
-public unsafe class Llama3Model
+public unsafe class Llama3Model(IBackend backend)
 {
-    public void Generate(Llama3Transformer transformer, Llama3Tokeniser tokeniser, Llama3Sampler sampler, string prompt, int steps)
+    public void Generate(Transformer transformer, Llama3Tokeniser tokeniser, Llama3Sampler sampler, string prompt, int steps)
     {
         var tokens = tokeniser.Encode(prompt, true, false);
         int token = tokens.Length > 0 ? tokens[0] : 128000; // BOS if empty
@@ -25,7 +25,7 @@ public unsafe class Llama3Model
             }
             else
             {
-                next = sampler.Sample(logits);
+                next = sampler.Sample(logits, backend);
             }
             pos++;
 
@@ -48,7 +48,7 @@ public unsafe class Llama3Model
         }
     }
 
-    public void Chat(Llama3Transformer transformer, Llama3Tokeniser tokeniser, Llama3Sampler s, int steps)
+    public void Chat(Transformer transformer, Llama3Tokeniser tokeniser, Llama3Sampler sampler, int steps)
     {
         // Simple chat loop implementation mirroring the C code
         // Note: Managing chat history/KV-cache correctly requires state persistence
@@ -83,7 +83,7 @@ public unsafe class Llama3Model
             while (pos < transformer.Config.seq_len)
             {
                 var logits = transformer.Forward(token, pos);
-                int next = s.Sample(logits);
+                int next = sampler.Sample(logits, backend);
                 pos++;
 
                 if (next == 128009 || next == 128001) // EOT or EOS
